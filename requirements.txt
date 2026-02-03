@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+python-multipart
+python-telegram-bot
+supabase
+python-dotenv
