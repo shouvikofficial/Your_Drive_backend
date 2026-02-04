@@ -1,6 +1,9 @@
 fastapi
 uvicorn
 python-multipart
-python-telegram-bot
-supabase
 python-dotenv
+requests
+python-jose
+passlib[bcrypt]
+python-telegram-bot
+
