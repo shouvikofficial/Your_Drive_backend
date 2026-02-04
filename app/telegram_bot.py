@@ -22,7 +22,7 @@ async def send_to_telegram(file):
                 files={
                     "document": (
                         file.filename,
-                        file.file,  # 🔥 STREAM FILE (NOT read into memory)
+                        file.file,
                     )
                 },
             )
@@ -33,7 +33,23 @@ async def send_to_telegram(file):
         if not data.get("ok"):
             raise RuntimeError(f"Telegram error: {data}")
 
-        return data["result"]["document"]["file_id"]
+        result = data["result"]
+
+        # 🔥 FIX: HANDLE ALL TELEGRAM FILE TYPES
+        if "document" in result:
+            return result["document"]["file_id"]
+
+        if "video" in result:
+            return result["video"]["file_id"]
+
+        if "audio" in result:
+            return result["audio"]["file_id"]
+
+        if "photo" in result:
+            # photo is array → take highest quality
+            return result["photo"][-1]["file_id"]
+
+        raise RuntimeError(f"Unknown Telegram response format: {result}")
 
     except Exception as e:
         print("Telegram upload failed:", e)
