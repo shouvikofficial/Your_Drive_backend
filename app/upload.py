@@ -32,8 +32,12 @@ async def upload_file(file: UploadFile = File(...)):
         # 🔥 Upload to Telegram
         file_id = await send_to_telegram(file)
 
-        # 🔥 IMPORTANT: return ONLY file_id (Flutter expects this)
-        return file_id
+        if not file_id:
+            raise Exception("Empty file_id from Telegram")
+
+        # ✅ CRITICAL FIX:
+        # Always return CLEAN plain text (no quotes, no newline)
+        return str(file_id).strip().replace('"', '').replace("'", '')
 
     except Exception as e:
         raise HTTPException(
