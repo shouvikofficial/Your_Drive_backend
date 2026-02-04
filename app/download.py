@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException
-import requests, os
+from fastapi.responses import RedirectResponse
+import requests
+import os
 
 router = APIRouter()
 
@@ -19,7 +21,7 @@ def get_file(file_id: str):
 
     file_path = r["result"]["file_path"]
 
-    # Return a REAL image URL
-    return {
-        "url": f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-    }
+    # ✅ REDIRECT to the real Telegram file
+    return RedirectResponse(
+        url=f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+    )
