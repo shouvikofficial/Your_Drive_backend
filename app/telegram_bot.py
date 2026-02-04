@@ -1,42 +1,40 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+import os
+import httpx
 from dotenv import load_dotenv
 
-from .telegram_bot import send_to_telegram  # ✅ FIXED (relative import)
-
-# --------------------------------------------------
-# INIT
-# --------------------------------------------------
-router = APIRouter()
 load_dotenv()
 
-# --------------------------------------------------
-# UPLOAD ROUTE (TELEGRAM WORKER ONLY)
-# --------------------------------------------------
-@router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """
-    Receives file from Flutter,
-    uploads it to Telegram private channel,
-    returns ONLY the Telegram file_id.
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
-    Supabase handles:
-    - Auth
-    - User isolation
-    - Metadata storage
-    """
+TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
 
-    if not file:
-        raise HTTPException(status_code=400, detail="No file provided")
+
+async def send_to_telegram(file):
+    if not BOT_TOKEN or not CHAT_ID:
+        raise RuntimeError("BOT_TOKEN or CHAT_ID not set")
 
     try:
-        # 🔥 Upload to Telegram
-        file_id = await send_to_telegram(file)
+        async with httpx.AsyncClient(timeout=None) as client:
+            response = await client.post(
+                TELEGRAM_URL,
+                data={"chat_id": CHAT_ID},
+                files={
+                    "document": (
+                        file.filename,
+                        file.file,  # 🔥 STREAM FILE (NOT read into memory)
+                    )
+                },
+            )
 
-        # 🔥 IMPORTANT: return ONLY file_id (Flutter expects plain text)
-        return file_id
+        response.raise_for_status()
+        data = response.json()
+
+        if not data.get("ok"):
+            raise RuntimeError(f"Telegram error: {data}")
+
+        return data["result"]["document"]["file_id"]
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Telegram upload failed: {str(e)}"
-        )
+        print("Telegram upload failed:", e)
+        raise
