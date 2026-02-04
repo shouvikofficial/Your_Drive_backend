@@ -3,7 +3,6 @@ uvicorn
 python-multipart
 python-dotenv
 requests
-python-jose
-passlib[bcrypt]
-python-telegram-bot
 
+passlib[bcrypt]
+python-jose[cryptography]
