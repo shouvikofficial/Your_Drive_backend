@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from dotenv import load_dotenv
 
-from app.telegrambot import send_to_telegram
+from app.telegram_bot import send_to_telegram
 
 # --------------------------------------------------
 # INIT
