@@ -1,28 +1,22 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
 
 from app.telegram_bot import send_to_telegram
 
-# --------------------------------------------------
-# INIT
-# --------------------------------------------------
 router = APIRouter()
 load_dotenv()
 
-# --------------------------------------------------
-# UPLOAD ROUTE (TELEGRAM WORKER ONLY)
-# --------------------------------------------------
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Receives file from Flutter,
-    uploads it to Telegram private channel,
-    returns ONLY the Telegram file_id.
-
-    Supabase handles:
-    - Auth
-    - User isolation
-    - Metadata storage
+    Uploads file to Telegram and returns:
+    {
+      file_id,
+      thumbnail_id,
+      type,
+      message_id
+    }
     """
 
     if not file:
@@ -30,14 +24,24 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         # 🔥 Upload to Telegram
-        file_id = await send_to_telegram(file)
+        result = await send_to_telegram(file)
 
-        if not file_id:
-            raise Exception("Empty file_id from Telegram")
+        if not result or "file_id" not in result or "message_id" not in result:
+            raise Exception("Invalid Telegram response")
 
-        # ✅ CRITICAL FIX:
-        # Always return CLEAN plain text (no quotes, no newline)
-        return str(file_id).strip().replace('"', '').replace("'", '')
+        return JSONResponse(
+            status_code=200,
+            content={
+                "file_id": str(result["file_id"]),
+                "thumbnail_id": (
+                    str(result["thumbnail_id"])
+                    if result.get("thumbnail_id")
+                    else None
+                ),
+                "type": str(result["type"]),
+                "message_id": result["message_id"],  # 🔥 REQUIRED FOR DELETE
+            },
+        )
 
     except Exception as e:
         raise HTTPException(
