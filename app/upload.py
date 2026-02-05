@@ -17,7 +17,7 @@ async def upload_file(file: UploadFile = File(...)):
     """
     Receives file from Flutter,
     uploads it to Telegram private channel,
-    returns file_id + thumbnail_id + type (JSON).
+    returns ONLY the Telegram file_id.
 
     Supabase handles:
     - Auth
@@ -30,21 +30,14 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         # 🔥 Upload to Telegram
-        result = await send_to_telegram(file)
+        file_id = await send_to_telegram(file)
 
-        if not result or "file_id" not in result:
-            raise Exception("Invalid Telegram response")
+        if not file_id:
+            raise Exception("Empty file_id from Telegram")
 
-        # ✅ RETURN STRUCTURED JSON (REQUIRED FOR VIDEO THUMBNAILS)
-        return {
-            "file_id": str(result["file_id"]).strip(),
-            "thumbnail_id": (
-                str(result["thumbnail_id"]).strip()
-                if result.get("thumbnail_id")
-                else None
-            ),
-            "type": result["type"],
-        }
+        # ✅ CRITICAL FIX:
+        # Always return CLEAN plain text (no quotes, no newline)
+        return str(file_id).strip().replace('"', '').replace("'", '')
 
     except Exception as e:
         raise HTTPException(
