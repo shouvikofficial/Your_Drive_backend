@@ -3,7 +3,9 @@ uvicorn
 python-multipart
 python-dotenv
 requests
-
 passlib[bcrypt]
 python-jose[cryptography]
 httpx
+telethon
+cryptg
+aiofiles
