@@ -4,12 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from telethon.errors import AuthKeyDuplicatedError
 
-# ✅ IMPORTS (Assumes delete.py is inside the 'app' folder like upload.py)
+# ✅ IMPORTS
 from app.upload import router as upload_router
 from app.download import router as download_router
-from app.delete import router as delete_router  # 👈 UNCOMMENTED THIS
+from app.delete import router as delete_router 
 
-# TELEGRAM CLIENT
+# TELEGRAM CLIENT (Now using StringSession internally)
 from app.telegram_bot import client
 
 # --------------------------------------------------
@@ -21,21 +21,23 @@ async def lifespan(app: FastAPI):
     os.makedirs("temp_uploads", exist_ok=True)
 
     # ---- STARTUP ----
-    print("🔄 Connecting to Telegram...")
+    print("🔄 Connecting to Telegram via String Session...")
     try:
-        # Connects using the session file defined in telegram_bot.py
+        # ✅ FIX: No more session files. StringSession connects instantly.
         if not client.is_connected():
             await client.start()
         
         print("🚀 Telegram Drive Worker ONLINE (Connected)")
 
     except AuthKeyDuplicatedError:
-        print("\n❌ CRITICAL ERROR: Session File Corrupted/Banned.")
-        print("👉 The app will crash. Please restart to generate a new session.\n")
-        raise RuntimeError("Session Corrupted")
+        # This usually only happens if the StringSession is used by another 
+        # active script or has been revoked.
+        print("\n❌ CRITICAL ERROR: String Session Invalid or Revoked.")
+        raise RuntimeError("Session Invalid")
 
     except Exception as e:
         print(f"❌ Connection Error: {e}")
+        # Don't let the app start if the connection fails
         raise RuntimeError(f"Connection Failed: {e}")
 
     yield  # Server runs here
@@ -70,8 +72,13 @@ app.add_middleware(
 # --------------------------------------------------
 app.include_router(upload_router, prefix="/api", tags=["Upload"])
 app.include_router(download_router, prefix="/api", tags=["Download"])
-app.include_router(delete_router, prefix="/api", tags=["Delete"]) # 👈 UNCOMMENTED THIS
+app.include_router(delete_router, prefix="/api", tags=["Delete"])
 
 @app.get("/", tags=["Health"])
 async def health():
-    return {"status": "online", "connected": client.is_connected()}
+    # This helps Render's Health Check and UptimeRobot confirm connectivity
+    return {
+        "status": "online", 
+        "connected": client.is_connected(),
+        "info": "Your Drive Backend is Ready"
+    }
