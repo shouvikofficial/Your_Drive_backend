@@ -1,26 +1,45 @@
+import asyncio
 from fastapi import APIRouter, HTTPException
 from app.telegram_bot import client, init_telethon, CHAT_ID
 
 router = APIRouter()
 
+
 @router.delete("/delete/{message_id}")
 async def delete_file(message_id: int):
     """
-    Deletes the file from the Telegram Channel using its message_id.
-    Note: Supabase deletion should be handled by your Flutter app logic.
+    Deletes a stored file from Telegram channel using message_id.
+    Safe for production with timeout & validation.
     """
+
     try:
-        # 1. Ensure the Telethon client is connected
+        # --------------------------------------------------
+        # Ensure Telethon connection
+        # --------------------------------------------------
         await init_telethon()
 
-        # 2. Use Telethon's delete_messages method
-        # This is much faster than making a new HTTP request every time
-        success = await client.delete_messages(CHAT_ID, message_id)
+        # --------------------------------------------------
+        # Attempt delete with timeout protection
+        # --------------------------------------------------
+        deleted = await asyncio.wait_for(
+            client.delete_messages(CHAT_ID, message_id),
+            timeout=20,
+        )
 
-        if not success:
-            raise Exception("Telegram could not find or delete the message.")
+        # Telethon returns list of deleted messages
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail="Message not found or already deleted.",
+            )
 
-        return {"success": True, "message": f"Message {message_id} deleted from storage."}
+        return {
+            "success": True,
+            "message": f"Message {message_id} deleted from Telegram storage.",
+        }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         print(f"Delete Error: {e}")

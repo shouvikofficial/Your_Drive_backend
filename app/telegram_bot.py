@@ -1,46 +1,82 @@
 import os
+import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# 1. CREDENTIALS: These are now hardcoded or pulled from Render Env
-API_ID = 34748224
-API_HASH = '4a5b76ba2a82d88ce0368c7d29cde72a'
+# --------------------------------------------------
+# Load & validate environment variables
+# --------------------------------------------------
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-STRING_SESSION = os.getenv("STRING_SESSION") 
-CHAT_ID = int(os.getenv("CHAT_ID"))
+STRING_SESSION = os.getenv("STRING_SESSION")
+CHAT_ID = os.getenv("CHAT_ID")
 
-# 2. INITIALIZE CLIENT: Using StringSession for Render persistence
-# This is your "Super Highway" to Telegram
+if not all([API_ID, API_HASH, BOT_TOKEN, STRING_SESSION, CHAT_ID]):
+    raise RuntimeError("❌ Missing required environment variables in .env")
+
+API_ID = int(API_ID)
+CHAT_ID = int(CHAT_ID)
+
+# --------------------------------------------------
+# Initialize Telegram client
+# --------------------------------------------------
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-async def init_telethon():
-    """Ensures the bot is connected before we try to send anything."""
-    if not client.is_connected():
-        await client.start(bot_token=BOT_TOKEN)
+# Prevent multiple simultaneous start() calls
+_client_lock = asyncio.Lock()
 
-async def send_to_telegram(file_path: str, filename: str):
+
+# --------------------------------------------------
+# Ensure connection safely
+# --------------------------------------------------
+async def init_telethon():
+    async with _client_lock:
+        if not client.is_connected():
+            try:
+                await client.start(bot_token=BOT_TOKEN)
+            except Exception:
+                await asyncio.sleep(2)
+                await client.start(bot_token=BOT_TOKEN)
+
+
+# --------------------------------------------------
+# Send merged file to Telegram with retry + timeout
+# --------------------------------------------------
+async def send_to_telegram(file_path: str, filename: str, retries: int = 3):
     """
-    Sends the merged file to Telegram as a DOCUMENT.
-    Telethon handles files up to 2GB automatically.
+    Uploads file to Telegram as DOCUMENT (no compression).
+    Supports retry and timeout for big-file reliability.
     """
+
     await init_telethon()
 
-    # We send as a document to ensure original quality (no compression)
-    # force_document=True is the same as sendDocument in the old API
-    message = await client.send_file(
-        CHAT_ID,
-        file_path,
-        caption=filename,
-        force_document=True 
-    )
+    last_error = None
 
-    # Return structured data for your Supabase Database
-    return {
-        "file_id": str(message.file.id), # The ID needed for downloading
-        "message_id": message.id,       # The ID needed for deleting
-        "type": "document",
-        "size": os.path.getsize(file_path)
-    }
+    for _ in range(retries):
+        try:
+            message = await asyncio.wait_for(
+                client.send_file(
+                    CHAT_ID,
+                    file_path,
+                    caption=filename,
+                    force_document=True,
+                ),
+                timeout=300,  # ⏱ 5 min timeout for big uploads
+            )
+
+            return {
+                "file_id": str(message.file.id),
+                "message_id": message.id,
+                "type": "document",
+                "size": os.path.getsize(file_path),
+            }
+
+        except Exception as e:
+            last_error = e
+            await asyncio.sleep(2)
+
+    raise Exception(f"Telegram upload failed after {retries} retries: {last_error}")

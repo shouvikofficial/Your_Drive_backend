@@ -1,43 +1,56 @@
-import io
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from app.telegram_bot import client, init_telethon
+from app.telegram_bot import client, init_telethon, CHAT_ID
+import mimetypes
 
 router = APIRouter()
 
-@router.get("/file/{file_id}")
-async def get_file(file_id: str):
+@router.get("/file/{message_id}")
+async def get_file(message_id: int):
     """
-    Downloads large files (>20MB) from Telegram via MTProto 
-    and streams them to the Flutter app.
+    Streams file from Telegram channel.
+    Includes Content-Length so frontend can show progress bar.
     """
     try:
-        # 1. Ensure Telethon is online
+        # Ensure connection
         await init_telethon()
 
-        # 2. Check if the file exists and get its metadata
-        # Note: Telethon can fetch the file directly using the file_id string
-        # We use a BytesIO object to store the data in memory temporarily
-        file_buffer = io.BytesIO()
-        
-        # 3. Download the file from the channel
-        # Telethon downloads the file in chunks automatically to save RAM
-        downloaded_file = await client.download_media(file_id, file=file_buffer)
-        
-        if not downloaded_file:
-            raise HTTPException(status_code=404, detail="File not found on Telegram servers")
+        # 1️⃣ Fetch message
+        message = await client.get_messages(CHAT_ID, ids=message_id)
 
-        # 4. Seek to the beginning of the buffer so the streamer can read it
-        file_buffer.seek(0)
+        if not message or not message.file:
+            raise HTTPException(status_code=404, detail="File not found")
 
-        # 5. Stream the response
-        # Using StreamingResponse ensures that even for large files,
-        # the server sends data piece-by-piece to the phone.
+        # 2️⃣ Get Metadata (Crucial for Frontend)
+        file_size = message.file.size  # Total bytes (needed for progress bar)
+        mime_type = message.file.mime_type or "application/octet-stream"
+        
+        # Determine filename
+        file_name = message.file.name
+        if not file_name:
+            # Fallback: guess extension from mime type
+            ext = mimetypes.guess_extension(mime_type) or ""
+            file_name = f"file_{message_id}{ext}"
+
+        # 3️⃣ Async Generator (Streams chunks from Telegram -> FastAPI -> User)
+        async def file_stream():
+            async for chunk in client.iter_download(message.media):
+                yield chunk
+
+        # 4️⃣ Streaming Response with Headers
         return StreamingResponse(
-            file_buffer, 
-            media_type="application/octet-stream"
+            file_stream(),
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{file_name}"',
+                "Content-Length": str(file_size),  # 👈 THIS FIXES THE PROGRESS BAR
+                "Accept-Ranges": "bytes",          # Allows video seeking/partial content
+            },
         )
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         print(f"Download Error: {e}")
-        raise HTTPException(status_code=500, detail="Could not retrieve file from Telegram")
+        raise HTTPException(status_code=500, detail="Telegram download failed")
