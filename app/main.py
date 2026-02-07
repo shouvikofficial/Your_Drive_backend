@@ -2,45 +2,49 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from telethon.errors import AuthKeyDuplicatedError
 
-# ROUTERS
+# ✅ IMPORTS (Assumes delete.py is inside the 'app' folder like upload.py)
 from app.upload import router as upload_router
 from app.download import router as download_router
-from app.delete import router as delete_router
+from app.delete import router as delete_router  # 👈 UNCOMMENTED THIS
 
 # TELEGRAM CLIENT
-from app.telegram_bot import client, BOT_TOKEN
-
+from app.telegram_bot import client
 
 # --------------------------------------------------
-# LIFESPAN: Startup & Shutdown control
+# LIFESPAN
 # --------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Runs once at startup and once at shutdown.
-    """
-
     # Ensure temp directory exists
-    os.makedirs("temp_chunks", exist_ok=True)
+    os.makedirs("temp_uploads", exist_ok=True)
 
     # ---- STARTUP ----
+    print("🔄 Connecting to Telegram...")
     try:
+        # Connects using the session file defined in telegram_bot.py
         if not client.is_connected():
-            await client.start(bot_token=BOT_TOKEN)
+            await client.start()
+        
+        print("🚀 Telegram Drive Worker ONLINE (Connected)")
 
-        print("🚀 Telegram Drive Worker ONLINE (MTProto connected)")
+    except AuthKeyDuplicatedError:
+        print("\n❌ CRITICAL ERROR: Session File Corrupted/Banned.")
+        print("👉 The app will crash. Please restart to generate a new session.\n")
+        raise RuntimeError("Session Corrupted")
 
     except Exception as e:
-        # Crash server if Telegram not connected (important for production)
-        raise RuntimeError(f"❌ Failed to connect Telethon: {e}")
+        print(f"❌ Connection Error: {e}")
+        raise RuntimeError(f"Connection Failed: {e}")
 
-    yield  # -------- SERVER RUNNING --------
+    yield  # Server runs here
 
     # ---- SHUTDOWN ----
     try:
-        await client.disconnect()
-        print("🛑 Server shutdown: Telethon disconnected.")
+        if client.is_connected():
+            await client.disconnect()
+            print("🛑 Telethon disconnected.")
     except Exception:
         pass
 
@@ -53,35 +57,21 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
-# --------------------------------------------------
-# CORS CONFIGURATION
-# --------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 🔧 Change to your domain in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
 # --------------------------------------------------
 # ROUTES
 # --------------------------------------------------
-app.include_router(upload_router, prefix="/api", tags=["Storage"])
-app.include_router(download_router, prefix="/api", tags=["Storage"])
-app.include_router(delete_router, prefix="/api", tags=["Storage"])
+app.include_router(upload_router, prefix="/api", tags=["Upload"])
+app.include_router(download_router, prefix="/api", tags=["Download"])
+app.include_router(delete_router, prefix="/api", tags=["Delete"]) # 👈 UNCOMMENTED THIS
 
-
-# --------------------------------------------------
-# HEALTH CHECK
-# --------------------------------------------------
 @app.get("/", tags=["Health"])
 async def health():
-    return {
-        "status": "online",
-        "worker": "Telegram Drive Engine",
-        "storage": "Unlimited (via MTProto)",
-        "telethon_connected": client.is_connected(),
-    }
+    return {"status": "online", "connected": client.is_connected()}
