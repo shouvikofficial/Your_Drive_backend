@@ -5,7 +5,6 @@ from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse
 from app.telegram_bot import client, init_telethon, CHAT_ID
-
 import redis
 
 router = APIRouter()
