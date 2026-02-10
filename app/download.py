@@ -37,11 +37,12 @@ async def get_file(message_id: int):
 
         return StreamingResponse(
             file_stream(),
-            media_type="application/octet-stream",  # ⚠️ MUST be binary
+            media_type="application/octet-stream",  # MUST remain encrypted binary
             headers={
                 "Content-Disposition": f'attachment; filename="{file_name}"',
                 "Content-Length": str(file_size),
                 "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=31536000",
             },
         )
 
@@ -60,7 +61,7 @@ async def get_thumbnail(message_id: int):
     """
     Returns the SAME encrypted bytes as /file.
     Flutter decrypts and shows a resized preview locally.
-    This keeps true zero-knowledge security.
+    Maintains zero-knowledge security.
     """
     try:
         await init_telethon()
@@ -76,7 +77,10 @@ async def get_thumbnail(message_id: int):
 
         return StreamingResponse(
             file_stream(),
-            media_type="application/octet-stream",  # ⚠️ encrypted binary only
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "public, max-age=31536000",
+            },
         )
 
     except Exception as e:
