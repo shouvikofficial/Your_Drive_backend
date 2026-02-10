@@ -13,7 +13,7 @@ router = APIRouter()
 TEMP_UPLOAD_DIR = Path("temp_uploads")
 TEMP_UPLOAD_DIR.mkdir(exist_ok=True)
 
-# 🧠 In-memory trackers (use Redis in real production)
+# 🧠 In-memory trackers (OK for single worker only)
 CANCELLED_UPLOADS = set()
 UPLOAD_SESSIONS = {}
 
@@ -29,13 +29,14 @@ async def upload_chunk(
     file_name: str = Form(...),
     upload_id: str = Form(...),
 ):
+    # ❌ Cancelled upload protection
     if upload_id in CANCELLED_UPLOADS:
         raise HTTPException(status_code=499, detail="Upload cancelled")
 
     session_dir = TEMP_UPLOAD_DIR / upload_id
     session_dir.mkdir(exist_ok=True)
 
-    # ---- create session if first chunk ----
+    # ---- create session safely ----
     if upload_id not in UPLOAD_SESSIONS:
         UPLOAD_SESSIONS[upload_id] = {
             "total": total_chunks,
@@ -46,17 +47,21 @@ async def upload_chunk(
 
     session = UPLOAD_SESSIONS[upload_id]
 
-    # ---- save chunk ----
-    chunk_path = session_dir / f"chunk_{chunk_index}"
-    content = await file.read()
-    with open(chunk_path, "wb") as f:
-        f.write(content)
-
-    session["received"].add(chunk_index)
-
-    # ---- ignore if already finalized ----
+    # ---- prevent duplicate finalize race ----
     if session["finalized"]:
         return {"status": "ignored"}
+
+    # ---- save chunk ----
+    chunk_path = session_dir / f"chunk_{chunk_index}"
+
+    try:
+        content = await file.read()
+        with open(chunk_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chunk save failed: {e}")
+
+    session["received"].add(chunk_index)
 
     # ---- check completion ----
     if len(session["received"]) == session["total"]:
@@ -91,9 +96,10 @@ async def cancel_upload(data: dict = Body(...)):
 
 
 # ============================================================
-# 📦 FINALIZE UPLOAD (PARALLEL SAFE)
+# 📦 FINALIZE UPLOAD (RACE-SAFE)
 # ============================================================
 async def finalize_upload(session_dir: Path, upload_id: str):
+    # ❌ cancelled before finalize
     if upload_id in CANCELLED_UPLOADS:
         CANCELLED_UPLOADS.discard(upload_id)
         return {"status": "cancelled"}
@@ -108,15 +114,17 @@ async def finalize_upload(session_dir: Path, upload_id: str):
     final_file_path = TEMP_UPLOAD_DIR / f"{upload_id}_{file_name}"
 
     try:
-        # ---- assemble file ----
+        # ---- assemble file safely ----
         with open(final_file_path, "wb") as final_file:
             for i in range(total_chunks):
                 chunk_path = session_dir / f"chunk_{i}"
                 if not chunk_path.exists():
                     raise HTTPException(status_code=400, detail=f"Missing chunk {i}")
-                with open(chunk_path, "rb") as chunk:
-                    final_file.write(chunk.read())
 
+                with open(chunk_path, "rb") as chunk:
+                    shutil.copyfileobj(chunk, final_file)
+
+        # ❌ cancelled after assembly
         if upload_id in CANCELLED_UPLOADS:
             return {"status": "cancelled"}
 
@@ -127,24 +135,29 @@ async def finalize_upload(session_dir: Path, upload_id: str):
             CHAT_ID,
             final_file_path,
             caption=file_name,
-            force_document=True
+            force_document=True,
         )
 
-        return JSONResponse(content={
-            "status": "done",
-            "message_id": sent_message.id,
-            "file_id": str(sent_message.id),
-            "type": sent_message.file.mime_type or "application/octet-stream",
-            "file_name": file_name
-        })
+        return JSONResponse(
+            content={
+                "status": "done",
+                "message_id": sent_message.id,
+                "file_id": str(sent_message.id),
+                "type": sent_message.file.mime_type or "application/octet-stream",
+                "file_name": file_name,
+            }
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        # ---- cleanup ----
+        # ---- cleanup ALWAYS ----
         CANCELLED_UPLOADS.discard(upload_id)
         UPLOAD_SESSIONS.pop(upload_id, None)
 
         if session_dir.exists():
-            shutil.rmtree(session_dir)
+            shutil.rmtree(session_dir, ignore_errors=True)
 
         if final_file_path.exists():
             os.remove(final_file_path)
@@ -156,6 +169,7 @@ async def finalize_upload(session_dir: Path, upload_id: str):
 @router.get("/upload-status/{upload_id}")
 async def upload_status(upload_id: str):
     session = UPLOAD_SESSIONS.get(upload_id)
+
     if not session:
         return {"status": "done"}
 
