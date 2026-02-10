@@ -6,12 +6,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 1. Load Env Vars
+# ============================================================
+# 🔐 LOAD ENV VARIABLES
+# ============================================================
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 CHAT_ID = os.getenv("CHAT_ID")
-# ✅ FETCH THE STRING SESSION FROM RENDER
-STRING_SESSION = os.getenv("STRING_SESSION") 
+STRING_SESSION = os.getenv("STRING_SESSION")
 
 if not all([API_ID, API_HASH, CHAT_ID, STRING_SESSION]):
     raise RuntimeError("❌ Missing API_ID, API_HASH, CHAT_ID, or STRING_SESSION in environment")
@@ -19,40 +20,77 @@ if not all([API_ID, API_HASH, CHAT_ID, STRING_SESSION]):
 API_ID = int(API_ID)
 CHAT_ID = int(CHAT_ID)
 
-# 2. Initialize Client
-# ✅ FIX: Using StringSession instead of 'session_v2' filename
-client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
+# ============================================================
+# 🚀 TELEGRAM CLIENT (STABLE CONFIG)
+# ============================================================
+client = TelegramClient(
+    StringSession(STRING_SESSION),
+    API_ID,
+    API_HASH,
+    timeout=120,          # ⏱ prevent timeout on large uploads
+    request_retries=5,    # 🔁 auto retry network errors
+)
 
-# 3. Connection Helper
+# ⭐ GLOBAL LOCK → ensures only ONE send_file runs at a time
+telegram_upload_lock = asyncio.Lock()
+
+# ============================================================
+# 🔌 CONNECTION HELPER
+# ============================================================
 async def init_telethon():
+    """
+    Ensure Telegram client is connected.
+    Works instantly with StringSession (no OTP needed).
+    """
     if not client.is_connected():
-        # Using .start() with StringSession works instantly without a phone prompt
         await client.start()
 
-# 4. Upload Helper
+
+# ============================================================
+# 📤 SAFE TELEGRAM UPLOAD (QUEUE + RETRY)
+# ============================================================
 async def send_to_telegram(file_path: str, filename: str):
     """
-    Sends a file to your Telegram storage (CHAT_ID).
+    Sends a file to Telegram safely.
+
+    Fixes:
+    - Parallel upload timeout
+    - Telegram rate-limit
+    - Network instability
     """
-    try:
-        await init_telethon()
-        
-        # Upload the file to the specific chat
-        message = await client.send_file(
-            CHAT_ID, 
-            file_path, 
-            caption=f"📁 File: {filename}",
-            force_document=True  # Ensures it doesn't compress images
-        )
-        
-        # Return the message ID or file ID for your Supabase database
-        return message.id
-        
-    except Exception as e:
-        print(f"❌ Telegram Upload Error: {e}")
+
+    await init_telethon()
+
+    # ⭐ SERIALIZE Telegram uploads (VERY IMPORTANT)
+    async with telegram_upload_lock:
+
+        # 🔁 retry up to 3 times
+        for attempt in range(3):
+            try:
+                message = await client.send_file(
+                    CHAT_ID,
+                    file_path,
+                    caption=f"📁 File: {filename}",
+                    force_document=True,  # prevent compression
+                )
+
+                return message.id  # success
+
+            except Exception as e:
+                print(f"⚠️ Telegram upload retry {attempt + 1}/3 → {e}")
+                await asyncio.sleep(2)
+
+        # ❌ failed after retries
+        print("❌ Telegram upload failed after 3 retries")
         return None
 
-# To test the connection locally, you can run:
+
+# ============================================================
+# 🧪 LOCAL TEST (OPTIONAL)
+# ============================================================
 # if __name__ == "__main__":
-#     asyncio.run(init_telethon())
-#     print("✅ Successfully connected to Telegram using String Session!")
+#     async def test():
+#         await init_telethon()
+#         print("✅ Telegram connected successfully")
+#
+#     asyncio.run(test())
