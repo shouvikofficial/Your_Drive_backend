@@ -30,36 +30,35 @@ async def upload_chunk(
     """
     
     # 1. Create a unique session folder for this specific file upload
+    # Path: temp_uploads/174829182_999/
     session_dir = TEMP_UPLOAD_DIR / upload_id
     session_dir.mkdir(exist_ok=True)
 
     # 2. Save the current chunk safely
+    # Path: temp_uploads/174829182_999/chunk_0
     chunk_path = session_dir / f"chunk_{chunk_index}"
 
     try:
+        # Async write is safer for server performance
         content = await file.read()
         with open(chunk_path, "wb") as f:
             f.write(content)
-
+            
         print(f"✅ Saved Chunk {chunk_index + 1}/{total_chunks} for {file_name}")
 
     except Exception as e:
         print(f"❌ Error saving chunk: {e}")
         raise HTTPException(status_code=500, detail="Failed to save chunk")
 
-    # 3. Check uploaded chunks
-    existing_chunks = sorted(
-        int(p.name.split("_")[1])
-        for p in session_dir.glob("chunk_*")
-    )
-
-    uploaded_chunks_count = len(existing_chunks)
+    # 3. Check if we have ALL chunks
+    # We count how many 'chunk_X' files are in the folder
+    uploaded_chunks_count = len(list(session_dir.glob("chunk_*")))
 
     if uploaded_chunks_count < total_chunks:
+        # Not finished yet, tell Flutter to keep going
         return JSONResponse(content={
             "status": "chunk_received",
             "chunk_index": chunk_index,
-            "uploaded_chunks": existing_chunks,  # ✅ resume support
             "message": "Chunk saved"
         })
 
@@ -78,11 +77,6 @@ async def finalize_upload(session_dir: Path, upload_id: str, file_name: str, tot
     final_file_path = TEMP_UPLOAD_DIR / f"{upload_id}_{file_name}"
 
     try:
-        # 🔐 Safety check: ensure all chunks exist
-        existing_chunks = list(session_dir.glob("chunk_*"))
-        if len(existing_chunks) != total_chunks:
-            raise HTTPException(status_code=400, detail="Incomplete upload")
-
         # 1. Reassemble the file
         with open(final_file_path, "wb") as final_file:
             for i in range(total_chunks):
@@ -98,12 +92,13 @@ async def finalize_upload(session_dir: Path, upload_id: str, file_name: str, tot
         await init_telethon()
         print(f"🚀 Uploading to Telegram: {file_name}")
 
+        # Send to Telegram (Force as document to keep quality)
         sent_message = await client.send_file(
             CHAT_ID,
             final_file_path,
             caption=file_name,
             force_document=True,
-            attributes=[]
+            attributes=[] # Add attributes here if you want to support streaming video
         )
 
         print(f"✅ Upload Complete! Message ID: {sent_message.id}")
@@ -126,8 +121,8 @@ async def finalize_upload(session_dir: Path, upload_id: str, file_name: str, tot
         print("🧹 Cleaning up temp files...")
         try:
             if session_dir.exists():
-                shutil.rmtree(session_dir)
+                shutil.rmtree(session_dir) # Delete chunk folder
             if final_file_path.exists():
-                os.remove(final_file_path)
+                os.remove(final_file_path) # Delete assembled file
         except Exception as cleanup_error:
             print(f"⚠️ Cleanup Warning: {cleanup_error}")
