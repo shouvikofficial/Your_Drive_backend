@@ -19,8 +19,11 @@ TEMP_UPLOAD_DIR.mkdir(exist_ok=True)
 # 🔴 REDIS CONNECTION (Render compatible)
 # ============================================================
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-
+r = redis.Redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    ssl=True,
+)
 
 # ============================================================
 # 🚀 CHUNK UPLOAD ENDPOINT (4-WORKER SAFE)
@@ -69,19 +72,26 @@ async def upload_chunk(
     # ---- mark chunk received ----
     r.sadd(f"{session_key}:received", chunk_index)
 
+    # ✅ DEFINE THESE AGAIN
     received_count = r.scard(f"{session_key}:received")
     total = int(r.hget(session_key, "total"))
 
-    # ---- finalize when complete ----
+    # ---- finalize when complete (ATOMIC LOCK) ----
     if received_count == total:
-        r.hset(session_key, "finalized", 1)
-        return await finalize_upload(session_dir, upload_id)
+        lock_key = f"{session_key}:finalizing"
+
+        if r.set(lock_key, "1", nx=True, ex=300):
+            return await finalize_upload(session_dir, upload_id)
+        else:
+            return {"status": "finalizing"}
 
     return {
         "status": "chunk_received",
         "uploaded": received_count,
         "total": total,
     }
+
+
 
 
 # ============================================================
