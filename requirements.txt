@@ -10,3 +10,4 @@ telethon
 cryptg
 aiofiles
 redis
+gunicorn
