@@ -1,12 +1,14 @@
 import os
 import shutil
-import json
 import asyncio
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse
-from app.telegram_bot import client, init_telethon, CHAT_ID
 import redis
+
+# ✅ Import the safe telegram uploader helper
+# Make sure your telegram_bot.py is in the app folder
+from app.telegram_bot import send_to_telegram
 
 router = APIRouter()
 
@@ -35,13 +37,13 @@ async def upload_chunk(
 ):
     session_key = f"upload:{upload_id}"
 
-    # 1. Check if already cancelled
+    # 1. Check if cancelled
     if r.sismember("cancelled_uploads", upload_id):
         raise HTTPException(status_code=499, detail="Upload cancelled")
 
-    # 2. Check if already completed (Idempotency)
+    # 2. Check if already done (Idempotency)
+    # If the client retries the last chunk, return success immediately
     if r.hget(session_key, "status") == "done":
-        # Return the stored success result immediately
         stored_result = r.hgetall(session_key)
         return {
             "status": "done",
@@ -76,10 +78,7 @@ async def upload_chunk(
         raise HTTPException(status_code=500, detail=f"Chunk save failed: {e}")
 
     # 5. Mark chunk as received (Atomic)
-    # returns 1 if added, 0 if already present
-    is_new_chunk = r.sadd(f"{session_key}:received", chunk_index)
-    
-    # We set TTL on the set as well
+    r.sadd(f"{session_key}:received", chunk_index)
     r.expire(f"{session_key}:received", 86400)
 
     received_count = r.scard(f"{session_key}:received")
@@ -103,7 +102,7 @@ async def upload_chunk(
 
 
 # ============================================================
-# 📦 FINALIZE UPLOAD
+# 📦 FINALIZE UPLOAD (TELEGRAM INTEGRATION FIXED)
 # ============================================================
 async def finalize_upload(session_dir: Path, upload_id: str, session_key: str, file_name: str, total_chunks: int):
     final_file_path = TEMP_UPLOAD_DIR / f"{upload_id}_{file_name}"
@@ -119,31 +118,28 @@ async def finalize_upload(session_dir: Path, upload_id: str, session_key: str, f
                 with open(chunk_path, "rb") as chunk:
                     shutil.copyfileobj(chunk, final_file)
 
-        # 2. Upload to Telegram
-        await init_telethon()
-        
-        # Determine mime type roughly or default
-        sent_message = await client.send_file(
-            CHAT_ID,
-            final_file_path,
-            caption=file_name,
-            force_document=True,
-            attributes=[], # Add attributes if needed (video duration etc)
-        )
+        # 2. Upload to Telegram (Safe Method)
+        # Using the improved helper function that handles retries and locking
+        sent_message = await send_to_telegram(str(final_file_path), file_name)
+
+        if sent_message is None:
+            raise Exception("Telegram upload returned None (failed)")
 
         # 3. Prepare Success Data
         result_data = {
             "status": "done",
-            "message_id": str(sent_message.id),  # Store as string in Redis
-            "file_id": str(sent_message.id),     # Or use sent_message.media.document.id if you need the internal Telegram ID
-            "file_name": file_name
+            "message_id": str(sent_message.id),       # ✅ Safe String ID
+            "file_id": str(sent_message.id),          # ✅ Safe String ID
+            "file_name": file_name,
+            # Optional: Capture mime type if available
+            "mime_type": sent_message.file.mime_type if sent_message.file else "application/octet-stream"
         }
 
-        # 4. Save Result to Redis (CRITICAL FIX)
+        # 4. Persist Result in Redis (CRITICAL FIX)
         # Instead of deleting, we update the hash with the results
         # and set a TTL so frontend has time to poll /upload-status
         r.hset(session_key, mapping=result_data)
-        r.expire(session_key, 3600) # Keep result for 1 hour
+        r.expire(session_key, 3600) # Keep result for 1 hour so frontend can fetch it
         
         # Cleanup "received" set immediately to save RAM
         r.delete(f"{session_key}:received") 
@@ -153,6 +149,8 @@ async def finalize_upload(session_dir: Path, upload_id: str, session_key: str, f
     except Exception as e:
         r.hset(session_key, "status", "error")
         r.hset(session_key, "error_msg", str(e))
+        # Release lock so retry is possible (optional)
+        r.delete(f"{session_key}:lock_finalize")
         raise HTTPException(status_code=500, detail=f"Finalization failed: {e}")
 
     finally:
