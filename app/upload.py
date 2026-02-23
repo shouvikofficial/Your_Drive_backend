@@ -362,13 +362,15 @@ async def upload_stats():
 # 🖼️ UPLOAD ENCRYPTED THUMBNAIL
 # ============================================================
 @router.post("/upload-thumbnail")
-async def upload_thumbnail(file: UploadFile = File(...)):
+async def upload_thumbnail(file: UploadFile = File(...), upload_id: str = Form(default=None)):
     temp_thumb_path = None  # 🔥 IMPORTANT SAFETY FIX
 
     try:
         await init_telethon()
 
-        temp_thumb_path = TEMP_UPLOAD_DIR / f"thumb_{file.filename}"
+        # Use upload_id for unique temp filename to prevent collisions on parallel uploads
+        unique_suffix = upload_id if upload_id else file.filename
+        temp_thumb_path = TEMP_UPLOAD_DIR / f"thumb_{unique_suffix}.enc"
 
         # Save encrypted thumbnail temporarily
         with open(temp_thumb_path, "wb") as f:
