@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse
-from app.telegram_bot import client, init_telethon, CHAT_ID
+from app.telegram_bot import client, init_telethon, CHAT_ID, telegram_upload_lock
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ async def finalize_upload(session_dir: Path, upload_id: str):
             for i in range(total_chunks):
                 chunk_path = session_dir / f"chunk_{i}"
                 with open(chunk_path, "rb") as chunk:
-                    shutil.copyfileobj(chunk, final_file)
+                    shutil.copyfileobj(chunk, final_file, length=1024 * 1024)  # 1MB buffer
 
         file_size = final_file_path.stat().st_size
         logger.info(f"✅ File assembled: {file_name} ({file_size:,} bytes)")
@@ -246,12 +246,13 @@ async def finalize_upload(session_dir: Path, upload_id: str):
         logger.info(f"📤 Uploading to Telegram: {file_name}")
         await init_telethon()
 
-        sent_message = await client.send_file(
-            CHAT_ID,
-            final_file_path,
-            caption=file_name,
-            force_document=True,
-        )
+        async with telegram_upload_lock:
+            sent_message = await client.send_file(
+                CHAT_ID,
+                final_file_path,
+                caption=file_name,
+                force_document=True,
+            )
 
         logger.info(f"✅ Uploaded to Telegram: {file_name} (msg_id: {sent_message.id})")
 
@@ -377,12 +378,13 @@ async def upload_thumbnail(file: UploadFile = File(...), upload_id: str = Form(d
             f.write(await file.read())
 
         # Upload encrypted binary as document
-        sent_message = await client.send_file(
-            CHAT_ID,
-            temp_thumb_path,
-            caption="encrypted_thumbnail",
-            force_document=True,
-        )
+        async with telegram_upload_lock:
+            sent_message = await client.send_file(
+                CHAT_ID,
+                temp_thumb_path,
+                caption="encrypted_thumbnail",
+                force_document=True,
+            )
 
         return {
             "status": "done",

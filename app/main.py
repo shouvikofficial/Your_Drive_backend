@@ -12,6 +12,13 @@ from app.delete import router as delete_router
 # TELEGRAM CLIENT (Now using StringSession internally)
 from app.telegram_bot import client
 
+# 📝 FILE LOGGING (for MCP observability)
+try:
+    from mcp_server.setup_logging import configure_logging
+    configure_logging()
+except ImportError:
+    pass  # MCP server not installed, skip file logging
+
 # --------------------------------------------------
 # LIFESPAN
 # --------------------------------------------------

@@ -1,0 +1,33 @@
+[33m3b2d14f[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfunicorn-version[m[33m, [m[1;31morigin/funicorn-version[m[33m)[m add funicorn
+[33m4751105[m redis fix
+[33mfe06e8e[m add redis to requirements.txt
+[33me835c9b[m add redis to requirements.txt
+[33mf83482e[m Telegram will never receive multiple send_file at same time
+[33m6a54592[m redis
+[33mf70d060[m bug fix
+[33m2de4eb6[m parallal upload
+[33m495d02a[m cross pblm
+[33m1002076[m previous version
+[33m0c5dcc3[m add upload pause
+[33mc7d57d4[m encryption pblm fix
+[33m09613b3[m fix deploy session token
+[33mb289193[m Security: Removed corrupted session files
+[33mac5ee6b[m fix deploy
+[33mde5b305[m add some feature
+[33mca839c8[m dlt some file
+[33m9c3344f[m now fully chunk
+[33m805240b[m chunk tecnique
+[33m0914091[m add delete option
+[33m2a9a4c7[m fix image show
+[33ma0f95af[m fix
+[33mda02354[m fix
+[33m9bfd569[m fix
+[33mf867f32[m fix img pblm
+[33m8e969d0[m fix img pblm
+[33mbed72cc[m fix pblm
+[33maf5f232[m fix img show
+[33m0546266[m add httpx dependency
+[33m3804aa8[m fix tg name
+[33mce4bb60[m supabase
+[33m30845e1[m fix auth
+[33m89f73bd[m Initial FastAPI backend
